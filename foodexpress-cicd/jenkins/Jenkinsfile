@@ -2,13 +2,12 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
-        SSH_KEY                = credentials('foodexpress-ec2-ssh')
-        DOCKER_IMAGE            = "sothuon/foodexpress-api"
-        IMAGE_TAG               = "${env.BUILD_NUMBER}"
-        TF_DIR                  = "terraform"
-        APP_PORT                = "3000"
-    }
+    DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+    DOCKER_IMAGE            = "sothuon/foodexpress-api"
+    IMAGE_TAG               = "${env.BUILD_NUMBER}"
+    TF_DIR                  = "terraform"
+    APP_PORT                = "3000"
+}
 
     stages {
 
