@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        SSH_KEY                = credentials('foodexpress-ec2-ssh')
+        DOCKER_IMAGE            = "sothuon/foodexpress-api"
+        IMAGE_TAG               = "${env.BUILD_NUMBER}"
+        TF_DIR                  = "terraform"
+        APP_PORT                = "3000"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Pulling latest code from GitHub...'
+                git branch: 'main',
+                    url: 'https://github.com/Sothoun/foodexpress-api.git',
+                    credentialsId: 'github-creds'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir('app') {
+                    sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} -t ${DOCKER_IMAGE}:latest ."
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                sh """
+                    echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
+                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                    docker push ${DOCKER_IMAGE}:latest
+                """
+            }
+        }
+
+        stage('Terraform Init & Apply') {
+            steps {
+                dir("${TF_DIR}") {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        sh '''
+                            terraform init -input=false
+                            terraform plan -input=false -var-file=terraform.tfvars -out=tfplan
+                            terraform apply -input=false -auto-approve tfplan
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Get EC2 Public IP') {
+            steps {
+                dir("${TF_DIR}") {
+                    script {
+                        env.EC2_PUBLIC_IP = sh(script: "terraform output -raw public_ip", returnStdout: true).trim()
+                        echo "EC2 Public IP: ${env.EC2_PUBLIC_IP}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Container to EC2') {
+            steps {
+                sshagent(credentials: ['foodexpress-ec2-ssh']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ec2-user@${env.EC2_PUBLIC_IP} '
+                            sudo docker pull ${DOCKER_IMAGE}:latest &&
+                            sudo docker stop foodexpress-api || true &&
+                            sudo docker rm foodexpress-api || true &&
+                            sudo docker run -d --name foodexpress-api \
+                                --restart unless-stopped \
+                                -p ${APP_PORT}:${APP_PORT} \
+                                ${DOCKER_IMAGE}:latest
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh """
+                    sleep 5
+                    curl -sf http://${env.EC2_PUBLIC_IP}:${APP_PORT}/health || (echo 'Health check failed' && exit 1)
+                """
+                echo "App is live at: http://${env.EC2_PUBLIC_IP}:${APP_PORT}"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully. FoodExpress API deployed to http://${env.EC2_PUBLIC_IP}:${APP_PORT}"
+        }
+        failure {
+            echo "Pipeline failed. Check the stage logs above."
+        }
+        always {
+            sh 'docker logout || true'
+        }
+    }
+}

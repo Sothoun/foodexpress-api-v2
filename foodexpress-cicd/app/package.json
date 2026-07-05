@@ -1,0 +1,12 @@
+{
+  "name": "foodexpress-api",
+  "version": "1.0.0",
+  "description": "FoodExpress online food ordering API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
